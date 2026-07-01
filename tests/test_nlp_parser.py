@@ -1,5 +1,3 @@
-import pytest
-
 from nlp_parser import parse_scout_text
 
 REPORT = """MLB AMATEUR SCOUTING REPORT

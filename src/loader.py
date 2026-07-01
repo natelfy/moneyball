@@ -1,12 +1,38 @@
-import os
 import json
 import logging
+import os
+
 import boto3
 import psycopg2
 from psycopg2.extras import execute_values
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("silver-loader")
+
+
+def parse_records(lines):
+    """Transforme des lignes JSONL en tuples prêts pour l'insertion SQL.
+
+    Fonction pure (pas d'I/O) : les lignes vides sont ignorées, les champs
+    numériques manquants prennent 0.
+    """
+    records = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        data = json.loads(line)
+        records.append((
+            data.get("player_name"),
+            data.get("team"),
+            data.get("games_played", 0),
+            data.get("at_bats", 0),
+            data.get("hits", 0),
+            data.get("home_runs", 0),
+            data.get("walks", 0),
+            data.get("strikeouts", 0),
+        ))
+    return records
 
 def get_db_connection():
     return psycopg2.connect(
@@ -25,7 +51,7 @@ def load_s3_to_postgres(bucket_name: str, file_key: str):
         aws_secret_access_key=os.getenv('S3_SECRET_KEY', 'password123'),
         region_name='us-east-1'
     )
-    
+
     # basename : évite qu'une clé S3 contenant un '/' (ex: "2024/hitters.jsonl")
     # ne pointe vers un sous-dossier /tmp inexistant, ou hors de /tmp.
     local_tmp_path = os.path.join("/tmp", os.path.basename(file_key))
@@ -40,17 +66,8 @@ def load_s3_to_postgres(bucket_name: str, file_key: str):
     # lecture ou d'insertion) pour ne pas saturer /tmp entre deux runs.
     try:
         # 2. Lecture des données
-        records = []
-        with open(local_tmp_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                data = json.loads(line)
-                # On extrait les valeurs dans l'ordre de notre table SQL
-                records.append((
-                    data.get("player_name"), data.get("team"),
-                    data.get("games_played", 0), data.get("at_bats", 0),
-                    data.get("hits", 0), data.get("home_runs", 0),
-                    data.get("walks", 0), data.get("strikeouts", 0)
-                ))
+        with open(local_tmp_path, encoding='utf-8') as f:
+            records = parse_records(f)
 
         if not records:
             logger.warning("Aucune donnée à insérer.")
@@ -90,9 +107,9 @@ def load_s3_to_postgres(bucket_name: str, file_key: str):
 if __name__ == "__main__":
     BUCKET = os.getenv("S3_BUCKET", "bronze-amateur-stats")
     FILE = os.getenv("FILE_NAME")
-    
+
     if not FILE:
         logger.error("La variable FILE_NAME est requise pour le loader.")
         exit(1)
-        
+
     load_s3_to_postgres(BUCKET, FILE)

@@ -1,6 +1,7 @@
+import logging
 import os
 import re
-import logging
+
 import boto3
 import fitz  # PyMuPDF
 import psycopg2
@@ -86,12 +87,12 @@ def process_report(bucket_name: str, file_key: str):
         aws_secret_access_key=os.getenv('S3_SECRET_KEY', 'password123'),
         region_name='us-east-1'
     )
-    
+
     local_tmp = f"/tmp/{file_key}"
     try:
         s3.download_file(bucket_name, file_key, local_tmp)
         logger.info(f"Rapport {file_key} téléchargé depuis la couche Bronze.")
-        
+
         # Extract & Transform (NLP)
         raw_text = extract_text_from_pdf(local_tmp)
         report = parse_scout_text(raw_text)
@@ -121,7 +122,7 @@ def process_report(bucket_name: str, file_key: str):
                     report.field_grade, report.overall_fv
                 ))
             conn.commit()
-            logger.info(f"Notes qualitatives fusionnées dans la couche Silver.")
+            logger.info("Notes qualitatives fusionnées dans la couche Silver.")
         except Exception:
             conn.rollback()
             raise

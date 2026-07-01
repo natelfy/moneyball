@@ -1,7 +1,9 @@
-import os
 import logging
+import os
+
 import boto3
 from botocore.exceptions import ClientError
+
 from scraper import CCBLScraper
 
 logging.basicConfig(
@@ -18,7 +20,7 @@ def upload_to_s3(file_path: str, bucket_name: str, object_name: str):
         aws_secret_access_key=os.getenv('S3_SECRET_KEY', 'password123'),
         region_name='us-east-1' # Requis par boto3 même pour MinIO
     )
-    
+
     try:
         # Vérification et création du bucket (Dossier racine du Datalake)
         try:
@@ -39,7 +41,7 @@ def main():
     OUTPUT_DIR = os.getenv("OUTPUT_DIR", "/app/data")
     FILE_NAME = os.getenv("FILE_NAME", "raw_extract.jsonl")
     BUCKET_NAME = os.getenv("S3_BUCKET", "bronze-amateur-stats")
-    
+
     if not TARGET_URL:
         logger.error("TARGET_URL non définie. Arrêt.")
         exit(1)
@@ -48,11 +50,11 @@ def main():
     local_file_path = os.path.join(OUTPUT_DIR, FILE_NAME)
 
     scraper = CCBLScraper(target_url=TARGET_URL)
-    
+
     try:
         html_content = scraper.fetch_page()
         players = scraper.extract_stats(html_content)
-        
+
         if not players:
             logger.warning("Aucune donnée. Abandon de l'ingestion.")
             return
@@ -61,7 +63,7 @@ def main():
         with open(local_file_path, 'w', encoding='utf-8') as f:
             for player in players:
                 f.write(player.model_dump_json() + "\n")
-                
+
         logger.info(f"Extraction terminée : {len(players)} joueurs identifiés.")
 
         # 2. Archivage dans le Datalake

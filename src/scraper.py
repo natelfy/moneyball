@@ -1,8 +1,9 @@
 import logging
+
 import requests
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
-from typing import List
+
 from models import HitterStat
 
 logger = logging.getLogger(__name__)
@@ -23,11 +24,11 @@ class CCBLScraper:
         response.raise_for_status()
         return response.text
 
-    def extract_stats(self, html: str) -> List[HitterStat]:
+    def extract_stats(self, html: str) -> list[HitterStat]:
         """Extrait les statistiques avec un mapping dynamique des colonnes."""
         soup = BeautifulSoup(html, 'html.parser')
         stats = []
-        
+
         table = soup.find('table')
         if not table:
             logger.error("Tableau introuvable sur la page NCAA.")
@@ -38,7 +39,7 @@ class CCBLScraper:
         if not thead:
             logger.error("En-tête (thead) introuvable. Impossible de mapper les colonnes.")
             return stats
-            
+
         headers = [th.text.strip().upper() for th in thead.find_all('th')]
         # Index des colonnes calculé une seule fois. On accepte plusieurs
         # libellés possibles par stat car la NCAA et les autres sites varient
@@ -51,6 +52,20 @@ class CCBLScraper:
                     return header_index[alias]
             return -1
 
+        # Fonctions utilitaires de récupération sécurisée. `cols` est passé en
+        # paramètre (pas capturé depuis la boucle) pour éviter tout effet de
+        # bord de closure.
+        def get_val(cols, *aliases: str) -> int:
+            idx = find_index(*aliases)
+            if idx == -1:
+                return 0 # Stat absente de cette page
+            val = cols[idx].text.strip().replace('-', '0')
+            return int(val) if val.isdigit() else 0
+
+        def get_str(cols, *aliases: str) -> str:
+            idx = find_index(*aliases)
+            return cols[idx].text.strip() if idx != -1 else "Unknown"
+
         # 2. Parsing des lignes
         tbody = table.find('tbody')
         rows = tbody.find_all('tr') if tbody else table.find_all('tr')[1:]
@@ -61,28 +76,16 @@ class CCBLScraper:
                 continue
 
             try:
-                # Fonctions utilitaires de récupération sécurisée
-                def get_val(*aliases: str) -> int:
-                    idx = find_index(*aliases)
-                    if idx == -1:
-                        return 0 # Stat absente de cette page
-                    val = cols[idx].text.strip().replace('-', '0')
-                    return int(val) if val.isdigit() else 0
-
-                def get_str(*aliases: str) -> str:
-                    idx = find_index(*aliases)
-                    return cols[idx].text.strip() if idx != -1 else "Unknown"
-
                 # Création de l'objet Pydantic. Les champs absents resteront à 0.
                 stat = HitterStat(
-                    player_name=get_str("PLAYER", "NAME"),
-                    team=get_str("TEAM"),
-                    games_played=get_val("G"),
-                    at_bats=get_val("AB"),
-                    hits=get_val("H"),
-                    home_runs=get_val("HR"),
-                    walks=get_val("BB"),
-                    strikeouts=get_val("K", "SO") # K ou SO selon les sites
+                    player_name=get_str(cols, "PLAYER", "NAME"),
+                    team=get_str(cols, "TEAM"),
+                    games_played=get_val(cols, "G"),
+                    at_bats=get_val(cols, "AB"),
+                    hits=get_val(cols, "H"),
+                    home_runs=get_val(cols, "HR"),
+                    walks=get_val(cols, "BB"),
+                    strikeouts=get_val(cols, "K", "SO") # K ou SO selon les sites
                 )
                 stats.append(stat)
 

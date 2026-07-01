@@ -32,12 +32,23 @@ Le projet suit une architecture *medallion* (Bronze / Silver) :
 | `main.py`        | Orchestration : scrape → cache local JSONL → upload Bronze (S3).           |
 | `loader.py`      | Bronze → Silver : charge le JSONL S3 dans PostgreSQL (UPSERT).             |
 | `nlp_parser.py`  | Parse les PDF de scouts (regex + Pydantic) → table `scout_grades`.         |
+| `features.py`    | Feature engineering sabermétrique partagé (OBP, K%, BB/K…) — parité train/inférence. |
 | `train.py`       | Silver → ML : JOIN quantitatif/qualitatif, entraîne XGBoost, pousse le modèle. |
+| `api.py`         | API FastAPI d'inférence : charge le modèle du registry et score un prospect. |
 | `mock_pdf.py`    | Utilitaire : génère un rapport de scout PDF de démo et l'envoie en Bronze.  |
+
+### Features sabermétriques
+
+`features.py` dérive des ratios à partir des comptages bruts, utilisés à
+l'identique par l'entraînement et l'API : `batting_avg`, `obp`, `bb_rate`,
+`k_rate`, `bb_per_k`, `hr_rate` (divisions protégées contre `AB=0`).
 
 ## Démarrage rapide
 
 ```bash
+# 0. Configurer les secrets (copie du modèle, à ajuster)
+cp .env.example .env
+
 # 1. Lancer l'infrastructure (Datalake + Warehouse)
 docker compose up -d minio postgres
 
@@ -56,14 +67,29 @@ FILE_NAME="condon_report.pdf" S3_BUCKET="bronze-scout-reports" \
 
 # 5. Entraînement du modèle de FV
 docker compose run --rm worker python src/train.py
+
+# 6. Servir le modèle via l'API d'inférence
+docker compose up -d api
 ```
 
-- Console MinIO : http://localhost:9001 (`admin` / `password123`)
-- PostgreSQL : `localhost:5432`, base `scouting_db` (`mlops` / `moneyball_password`)
+### Interroger l'API
 
-> ⚠️ Les identifiants par défaut sont destinés au développement local
-> uniquement. En dehors de la machine locale, fournissez-les via des
-> variables d'environnement / secrets et ne les commitez jamais.
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"games_played":57,"at_bats":200,"hits":70,"home_runs":34,
+       "walks":25,"strikeouts":60,"hit_grade":55,"power_grade":70,
+       "run_grade":40,"arm_grade":55,"field_grade":50}'
+# → {"predicted_fv": 58.4, "rounded_fv": 60, "scale": "20-80"}
+```
+
+- API : http://localhost:8000 (`/health`, `/predict`, docs auto sur `/docs`)
+- Console MinIO : http://localhost:9001
+- PostgreSQL : `localhost:5432`, base `scouting_db`
+
+> ⚠️ Les identifiants sont lus depuis `.env` (ignoré par git). Les valeurs par
+> défaut ne servent qu'au développement local ; ne commitez jamais de vrais
+> secrets. Voir `.env.example`.
 
 ## Variables d'environnement
 
@@ -73,18 +99,24 @@ docker compose run --rm worker python src/train.py
 | `FILE_NAME`         | `raw_extract.jsonl`      | `main`/`loader`/`nlp`  |
 | `S3_ENDPOINT`       | `http://minio:9000`      | tous les jobs S3       |
 | `S3_BUCKET`         | `bronze-amateur-stats`   | `main`/`loader`        |
-| `S3_MODEL_BUCKET`   | `ml-models`              | `train.py`             |
+| `S3_MODEL_BUCKET`   | `ml-models`              | `train.py`/`api.py`    |
+| `MODEL_NAME`        | `draft_fv_predictor_v1.joblib` | `train.py`/`api.py` |
+| `MODEL_LOCAL_PATH`  | *(optionnel)*            | `api.py` (bypass S3)   |
 | `PG_HOST`/`PG_PORT` | `postgres` / `5432`      | `loader`/`nlp`/`train` |
 
-## Tests
+Les identifiants (`MINIO_ROOT_*`, `POSTGRES_*`, `S3_ACCESS_KEY`,
+`S3_SECRET_KEY`) sont définis dans `.env` — voir `.env.example`.
 
-Les tests unitaires couvrent la logique pure (parsing, validation), sans
-dépendance à S3 ni PostgreSQL :
+## Tests & lint
+
+Les tests couvrent la logique pure (parsing, features, validation, API avec
+modèle injecté), sans dépendance à S3 ni PostgreSQL :
 
 ```bash
 pip install -r requirements-dev.txt
-pytest
+ruff check .   # lint
+pytest         # tests
 ```
 
-La CI (`.github/workflows/ci.yml`) exécute la suite de tests et vérifie que
-l'image Docker du worker se construit à chaque push / pull request.
+La CI (`.github/workflows/ci.yml`) exécute, à chaque push / pull request :
+le lint `ruff`, la suite `pytest`, et le build de l'image Docker.

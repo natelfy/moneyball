@@ -1,6 +1,7 @@
-import fitz
-import boto3
 import os
+
+import boto3
+import fitz
 
 print("Génération du rapport PDF de scout...")
 
@@ -23,10 +24,10 @@ page.insert_text((50, 50), text)
 doc.save('/tmp/condon_report.pdf')
 
 # 2. Upload vers la couche Bronze (MinIO)
-s3 = boto3.client('s3', 
-                  endpoint_url='http://minio:9000', 
-                  aws_access_key_id='admin', 
-                  aws_secret_access_key='password123', 
+s3 = boto3.client('s3',
+                  endpoint_url=os.getenv('S3_ENDPOINT', 'http://minio:9000'),
+                  aws_access_key_id=os.getenv('S3_ACCESS_KEY', 'admin'),
+                  aws_secret_access_key=os.getenv('S3_SECRET_KEY', 'password123'),
                   region_name='us-east-1')
 
 try:

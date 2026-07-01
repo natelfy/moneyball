@@ -1,0 +1,14 @@
+target-version = "py311"
+line-length = 100
+
+[lint]
+# E/W: pycodestyle, F: pyflakes, I: tri des imports, UP: pyupgrade, B: bugbear
+select = ["E", "W", "F", "I", "UP", "B"]
+ignore = [
+    "E501",  # longueur de ligne (SQL/commentaires longs tolérés)
+    "B008",  # Depends(...) en défaut d'argument est le pattern idiomatique FastAPI
+]
+
+[lint.per-file-ignores]
+# Les scripts utilitaires impriment volontairement et s'exécutent au niveau module.
+"src/mock_pdf.py" = ["T201"]

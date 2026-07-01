@@ -7,8 +7,9 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: "admin"
-      MINIO_ROOT_PASSWORD: "password123"
+      # Identifiants lus depuis .env (défauts pour le dev local uniquement).
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-admin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-password123}"
     command: server /data --console-address ":9001"
     volumes:
       - minio_storage:/data
@@ -20,9 +21,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: "mlops"
-      POSTGRES_PASSWORD: "moneyball_password"
-      POSTGRES_DB: "scouting_db"
+      POSTGRES_USER: "${POSTGRES_USER:-mlops}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-moneyball_password}"
+      POSTGRES_DB: "${POSTGRES_DB:-scouting_db}"
     volumes:
       - pg_data:/var/lib/postgresql/data
       # Montage du script d'initialisation SQL
@@ -36,17 +37,33 @@ services:
       - postgres
     environment:
       - S3_ENDPOINT=http://minio:9000
-      - S3_ACCESS_KEY=admin
-      - S3_SECRET_KEY=password123
-      - S3_BUCKET=bronze-amateur-stats
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-admin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-password123}
+      - S3_BUCKET=${S3_BUCKET:-bronze-amateur-stats}
+      - S3_MODEL_BUCKET=${S3_MODEL_BUCKET:-ml-models}
       - PG_HOST=postgres
       - PG_PORT=5432
-      - PG_USER=mlops
-      - PG_PASSWORD=moneyball_password
-      - PG_DB=scouting_db
+      - PG_USER=${POSTGRES_USER:-mlops}
+      - PG_PASSWORD=${POSTGRES_PASSWORD:-moneyball_password}
+      - PG_DB=${POSTGRES_DB:-scouting_db}
       # Variables d'exécution
       - TARGET_URL=${TARGET_URL:-""}
       - FILE_NAME=${FILE_NAME:-""}
+
+  # API d'inférence : sert le modèle du Model Registry (S3) via HTTP.
+  api:
+    build: .
+    command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      - minio
+    environment:
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-admin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-password123}
+      - S3_MODEL_BUCKET=${S3_MODEL_BUCKET:-ml-models}
+      - MODEL_NAME=${MODEL_NAME:-draft_fv_predictor_v1.joblib}
 
 volumes:
   minio_storage:
