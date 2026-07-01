@@ -1,0 +1,53 @@
+services:
+  # Couche Bronze : Datalake
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: mlops-datalake
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: "admin"
+      MINIO_ROOT_PASSWORD: "password123"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_storage:/data
+
+  # Couche Silver : Data Warehouse
+  postgres:
+    image: postgres:15-alpine
+    container_name: mlops-warehouse
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: "mlops"
+      POSTGRES_PASSWORD: "moneyball_password"
+      POSTGRES_DB: "scouting_db"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # Montage du script d'initialisation SQL
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # Job MLOps : Ingestion et Transformation
+  worker:
+    build: .
+    depends_on:
+      - minio
+      - postgres
+    environment:
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=admin
+      - S3_SECRET_KEY=password123
+      - S3_BUCKET=bronze-amateur-stats
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=mlops
+      - PG_PASSWORD=moneyball_password
+      - PG_DB=scouting_db
+      # Variables d'exécution
+      - TARGET_URL=${TARGET_URL:-""}
+      - FILE_NAME=${FILE_NAME:-""}
+
+volumes:
+  minio_storage:
+  pg_data:
