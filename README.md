@@ -33,8 +33,10 @@ Le projet suit une architecture *medallion* (Bronze / Silver) :
 | `loader.py`      | Bronze → Silver : charge le JSONL S3 dans PostgreSQL (UPSERT).             |
 | `nlp_parser.py`  | Parse les PDF de scouts (regex + Pydantic) → table `scout_grades`.         |
 | `features.py`    | Feature engineering sabermétrique partagé (OBP, K%, BB/K…) — parité train/inférence. |
+| `scoring.py`     | Moteur de scoring : convertit les stats en grades 20-80 par outil + note globale. |
+| `report.py`      | Tableau de scouting : fusionne les sources, score et classe les prospects. |
 | `train.py`       | Silver → ML : JOIN quantitatif/qualitatif, entraîne XGBoost, pousse le modèle. |
-| `api.py`         | API FastAPI d'inférence : charge le modèle du registry et score un prospect. |
+| `api.py`         | API FastAPI : inférence du modèle (`/predict`) et classement statistique (`/rank`). |
 | `mock_pdf.py`    | Utilitaire : génère un rapport de scout PDF de démo et l'envoie en Bronze.  |
 
 ### Features sabermétriques
@@ -42,6 +44,37 @@ Le projet suit une architecture *medallion* (Bronze / Silver) :
 `features.py` dérive des ratios à partir des comptages bruts, utilisés à
 l'identique par l'entraînement et l'API : `batting_avg`, `obp`, `bb_rate`,
 `k_rate`, `bb_per_k`, `hr_rate` (divisions protégées contre `AB=0`).
+
+### Tableau de scouting (`report.py`)
+
+Traduit les stats en **grades 20-80 façon scout** (`scoring.py`), puis classe
+les prospects. Chaque outil (contact, puissance, discipline, on-base) n'est
+gradé que si la donnée existe — les sources amateurs sont souvent partielles
+(leaders de HR sans AB, leaders d'OBP sans HR). Un `home_runs=0` est traité
+comme *stat absente*, pas comme « aucune puissance ». La note globale est une
+moyenne pondérée *moneyball* (on-base + puissance d'abord) renormalisée sur les
+outils présents.
+
+```bash
+# Démo directe sur les fichiers JSONL (sans infrastructure)
+PYTHONPATH=src python src/report.py --source local --dir local_data --top 10
+# En production : lit le Data Warehouse
+PYTHONPATH=src python src/report.py --source postgres
+```
+
+Exemple — la section « profils complets » isole les prospects *dual-threat*
+(puissance **et** on-base **et** discipline mesurés), la vraie valeur ajoutée :
+
+```
+PROFILS COMPLETS / DUAL-THREAT (5 joueurs)
+ #  PROSPECT               ÉQUIPE            FV  HIT PWR EYE OBP  DATA
+ 1  Blake Primrose         Saint Joseph's    75   75  70  80  80  100%
+ 2  Landon Hairston        Arizona St.       75   80  70  70  80  100%
+ 3  Chris Katz             Mercer            75   75  60  80  80  100%
+```
+
+C'est la fusion des sources (UPSERT `GREATEST`) qui reconstitue ces profils
+complets à partir de fichiers partiels.
 
 ## Démarrage rapide
 
@@ -81,9 +114,17 @@ curl -X POST http://localhost:8000/predict \
        "walks":25,"strikeouts":60,"hit_grade":55,"power_grade":70,
        "run_grade":40,"arm_grade":55,"field_grade":50}'
 # → {"predicted_fv": 58.4, "rounded_fv": 60, "scale": "20-80"}
+
+# Classement statistique (sans modèle entraîné requis)
+curl -X POST http://localhost:8000/rank \
+  -H "Content-Type: application/json" \
+  -d '{"prospects":[
+        {"player_name":"Davis","team":"Louisville","games_played":57,"home_runs":34},
+        {"player_name":"Rodriguez","team":"BCU","games_played":54,"at_bats":154,"hits":64,"walks":40}
+      ]}'
 ```
 
-- API : http://localhost:8000 (`/health`, `/predict`, docs auto sur `/docs`)
+- API : http://localhost:8000 (`/health`, `/predict`, `/rank`, docs auto sur `/docs`)
 - Console MinIO : http://localhost:9001
 - PostgreSQL : `localhost:5432`, base `scouting_db`
 

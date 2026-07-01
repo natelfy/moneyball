@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from features import MODEL_FEATURE_COLUMNS, compute_sabermetrics
+from scoring import rank_prospects, to_scout_scale
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("inference-api")
@@ -33,6 +34,22 @@ class ProspectStats(BaseModel):
     run_grade: int = Field(default=40, ge=20, le=80)
     arm_grade: int = Field(default=40, ge=20, le=80)
     field_grade: int = Field(default=40, ge=20, le=80)
+
+
+class ProspectCounts(BaseModel):
+    """Comptages bruts pour le scoring statistique (sans notes de scout requises)."""
+    player_name: str = "Unknown"
+    team: str = "Unknown"
+    games_played: int = Field(default=0, ge=0)
+    at_bats: int = Field(default=0, ge=0)
+    hits: int = Field(default=0, ge=0)
+    home_runs: int = Field(default=0, ge=0)
+    walks: int = Field(default=0, ge=0)
+    strikeouts: int = Field(default=0, ge=0)
+
+
+class RankRequest(BaseModel):
+    prospects: list[ProspectCounts]
 
 
 def _download_model_from_s3(local_path: str) -> None:
@@ -69,12 +86,6 @@ def build_feature_frame(stats: ProspectStats) -> pd.DataFrame:
     return pd.DataFrame([[record[c] for c in MODEL_FEATURE_COLUMNS]], columns=MODEL_FEATURE_COLUMNS)
 
 
-def to_scout_scale(value: float) -> int:
-    """Arrondit au multiple de 5 le plus proche et borne à l'échelle 20-80."""
-    clamped = min(80.0, max(20.0, value))
-    return int(round(clamped / 5.0) * 5)
-
-
 app = FastAPI(title="Moneyball FV Predictor", version="1.0.0")
 
 
@@ -96,4 +107,27 @@ def predict(stats: ProspectStats, model=Depends(get_model)) -> dict:
         "predicted_fv": round(raw_fv, 2),
         "rounded_fv": to_scout_scale(raw_fv),
         "scale": "20-80",
+    }
+
+
+@app.post("/rank")
+def rank(request: RankRequest) -> dict:
+    """Classe des prospects par note globale à partir de leurs stats seules.
+
+    Ne nécessite pas de modèle entraîné : le scoring 20-80 est transparent et
+    dérivé directement des sabermétriques (utile pour un tableau de scouting).
+    """
+    ranked = rank_prospects([p.model_dump() for p in request.prospects])
+    return {
+        "count": len(ranked),
+        "ranking": [
+            {
+                "player_name": r["player_name"],
+                "team": r["team"],
+                "overall_fv": r["scouting"]["overall_fv"],
+                "grades": r["scouting"]["grades"],
+                "data_completeness": r["scouting"]["data_completeness"],
+            }
+            for r in ranked
+        ],
     }

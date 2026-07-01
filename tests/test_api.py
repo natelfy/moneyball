@@ -66,3 +66,18 @@ def test_build_feature_frame_includes_sabermetrics():
     frame = build_feature_frame(stats)
     assert list(frame.columns) == MODEL_FEATURE_COLUMNS
     assert frame.loc[0, "batting_avg"] == 0.35
+
+
+def test_rank_endpoint_orders_prospects():
+    # /rank ne dépend pas du modèle S3 : scoring statistique pur.
+    client = TestClient(app)
+    payload = {"prospects": [
+        {"player_name": "Weak", "team": "B", "games_played": 57, "home_runs": 5},
+        {"player_name": "Slugger", "team": "A", "games_played": 57, "home_runs": 34},
+    ]}
+    resp = client.post("/rank", json=payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 2
+    assert body["ranking"][0]["player_name"] == "Slugger"  # meilleure FV en tête
+    assert body["ranking"][0]["overall_fv"] >= body["ranking"][1]["overall_fv"]
