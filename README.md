@@ -37,6 +37,7 @@ Le projet suit une architecture *medallion* (Bronze / Silver) :
 | `valuation.py`   | Détection de sous-évaluation : grade statistique vs grade du scout (cœur moneyball). |
 | `report.py`      | Tableau de scouting : fusionne les sources, score, classe (texte ou HTML). |
 | `train.py`       | Silver → ML : JOIN quantitatif/qualitatif, entraîne XGBoost, pousse le modèle. |
+| `evaluate.py`    | Harnais d'évaluation : cross-validation MAE, baseline, importances de features. |
 | `api.py`         | API FastAPI : `/predict`, classement `/rank`, sous-évaluation `/valuation`. |
 | `mock_pdf.py`    | Utilitaire : génère un rapport de scout PDF de démo et l'envoie en Bronze.  |
 
@@ -94,6 +95,35 @@ dépasse la **réputation**. On compare, outil par outil, le grade statistique
 
 Comparaison offensive (bat vs bat) assumée : le grade statistique ne couvre pas
 la défense/course, incluses dans la Future Value globale du scout.
+
+### Validation du modèle (`evaluate.py`)
+
+Rend la qualité du modèle ML mesurable et honnête : cross-validation K-fold
+(MAE ± écart-type), comparaison à un **baseline naïf** (prédire la moyenne) et
+**importances des features**. On branche un dataset de drafts historiques
+labellisé (JSONL avec comptages + grades scout + `overall_fv`) via `--data` ;
+sans argument, l'évaluation lit le Data Warehouse.
+
+```bash
+PYTHONPATH=src python src/evaluate.py --data drafts_historiques.jsonl
+```
+
+```
+MAE modèle          : 1.31 ± 0.26 pts de FV
+MAE baseline (moy.) : 6.16 pts
+Amélioration        : 78.8% vs baseline
+IMPORTANCE DES FEATURES (top)
+  home_runs       0.601 ████████████████████████
+  hr_rate         0.285 ███████████
+```
+
+### Calibration des grades (`scoring.calibrate_benchmarks`)
+
+Les ancrages 20/50/80 de `scoring.py` peuvent être recalculés à partir des
+percentiles d'une **population représentative** (`grade_prospect(..., benchmarks=…)`),
+pour ancrer les grades au vivier réel plutôt qu'à des seuils fixes. ⚠️ Calibrer
+sur un échantillon de « leaders » biaise les seuils vers le haut — utiliser un
+vivier complet.
 
 ## Démarrage rapide
 

@@ -1,4 +1,10 @@
-from scoring import grade_prospect, rank_prospects, to_scout_scale
+from scoring import (
+    BENCHMARKS,
+    calibrate_benchmarks,
+    grade_prospect,
+    rank_prospects,
+    to_scout_scale,
+)
 
 
 def test_to_scout_scale_rounds_and_clamps():
@@ -38,6 +44,35 @@ def test_grade_prospect_no_data_defaults_low():
     res = grade_prospect()
     assert res["grades"] == {}
     assert res["overall_fv"] == 20
+
+
+def test_calibrate_benchmarks_computes_percentiles():
+    # Population avec de l'AB partout -> on_base/contact/eye calibrables.
+    records = [
+        {"games_played": 55, "at_bats": 150 + i, "hits": 40 + i,
+         "home_runs": (i % 15) + 1, "walks": 10 + i, "strikeouts": 30}
+        for i in range(20)
+    ]
+    bm = calibrate_benchmarks(records)
+    for metric in ("power", "on_base", "contact", "eye"):
+        p20, p50, p80 = bm[metric]
+        assert p20 < p50 < p80  # segments strictement croissants
+
+
+def test_calibrate_benchmarks_falls_back_when_too_few_samples():
+    bm = calibrate_benchmarks([{"games_played": 55, "home_runs": 10}], min_samples=8)
+    # Pas assez de données -> on garde les seuils par défaut.
+    assert bm["power"] == BENCHMARKS["power"]
+    assert bm["on_base"] == BENCHMARKS["on_base"]
+
+
+def test_grade_prospect_respects_custom_benchmarks():
+    stats = {"at_bats": 200, "hits": 60, "walks": 20, "home_runs": 0}
+    # Benchmarks très exigeants -> contact plus faible que par défaut.
+    strict = {**BENCHMARKS, "contact": (0.350, 0.420, 0.500)}
+    default_grade = grade_prospect(**stats)["grades"]["contact"]
+    strict_grade = grade_prospect(**stats, benchmarks=strict)["grades"]["contact"]
+    assert strict_grade < default_grade
 
 
 def test_rank_prospects_orders_by_overall_desc():

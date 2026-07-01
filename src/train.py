@@ -41,6 +41,17 @@ def extract_features() -> pd.DataFrame:
         logger.error(f"Échec de l'extraction des features : {e}")
         raise
 
+def build_pipeline() -> Pipeline:
+    """Construit le pipeline modèle (Normalisation + XGBoost).
+
+    Factorisé pour être réutilisé à l'identique par l'entraînement et le
+    harnais d'évaluation (`evaluate.py`)."""
+    return Pipeline([
+        ('scaler', StandardScaler()),
+        ('xgb', XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42))
+    ])
+
+
 def train_model(df: pd.DataFrame) -> Pipeline:
     """Entraîne un pipeline Scikit-Learn/XGBoost pour prédire la Draft Suitability (FV)."""
     if df.empty:
@@ -54,11 +65,7 @@ def train_model(df: pd.DataFrame) -> Pipeline:
     X = df[MODEL_FEATURE_COLUMNS]
     y = df['overall_fv']
 
-    # Construction du pipeline (Normalisation + Algorithme)
-    pipeline = Pipeline([
-        ('scaler', StandardScaler()),
-        ('xgb', XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42))
-    ])
+    pipeline = build_pipeline()
 
     # Logique de protection architecturale pour les tests unitaires avec peu de données
     if len(df) < 5:

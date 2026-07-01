@@ -7,6 +7,8 @@ gradé **uniquement si la donnée existe** (les sources amateurs sont souvent
 partielles : leaders de HR sans AB, leaders d'OBP sans HR), et la note globale
 est une moyenne pondérée renormalisée sur les outils réellement disponibles.
 """
+import numpy as np
+
 from features import compute_sabermetrics
 
 # Ancrages 20/50/80 par métrique (interpolation linéaire par morceaux).
@@ -49,9 +51,14 @@ def grade_prospect(
     home_runs: int = 0,
     walks: int = 0,
     strikeouts: int = 0,
+    benchmarks: dict = BENCHMARKS,
     **_ignored: object,
 ) -> dict[str, object]:
     """Produit les grades 20-80 par outil + une note globale.
+
+    `benchmarks` : ancrages 20/50/80 par métrique. Par défaut les valeurs
+    calibrées à la main ; passer le résultat de `calibrate_benchmarks()` pour
+    des seuils ajustés à une population réelle.
 
     Retourne un dict avec les grades disponibles, la note `overall` (float,
     pour le tri), `overall_fv` (arrondie à l'échelle 20-80) et la complétude
@@ -71,13 +78,13 @@ def grade_prospect(
     # trompeur.
     if games_played > 0 and home_runs > 0:
         hr_per_game = home_runs / games_played
-        grades["power"] = to_scout_scale(_piecewise_grade(hr_per_game, *BENCHMARKS["power"]))
+        grades["power"] = to_scout_scale(_piecewise_grade(hr_per_game, *benchmarks["power"]))
 
     # On-base / contact / discipline nécessitent des passages au bâton.
     if at_bats > 0:
-        grades["on_base"] = to_scout_scale(_piecewise_grade(sm["obp"], *BENCHMARKS["on_base"]))
-        grades["contact"] = to_scout_scale(_piecewise_grade(sm["batting_avg"], *BENCHMARKS["contact"]))
-        grades["eye"] = to_scout_scale(_piecewise_grade(sm["bb_rate"], *BENCHMARKS["eye"]))
+        grades["on_base"] = to_scout_scale(_piecewise_grade(sm["obp"], *benchmarks["on_base"]))
+        grades["contact"] = to_scout_scale(_piecewise_grade(sm["batting_avg"], *benchmarks["contact"]))
+        grades["eye"] = to_scout_scale(_piecewise_grade(sm["bb_rate"], *benchmarks["eye"]))
 
     # Note globale : moyenne pondérée renormalisée sur les outils présents.
     if grades:
@@ -107,3 +114,46 @@ def rank_prospects(records):
         scored.append({**rec, "scouting": result})
     scored.sort(key=lambda r: r["scouting"]["overall"], reverse=True)
     return scored
+
+
+def _metric_values(records):
+    """Extrait, par métrique, les valeurs observées dans une population."""
+    values = {"power": [], "on_base": [], "contact": [], "eye": []}
+    for rec in records:
+        gp = rec.get("games_played", 0) or 0
+        ab = rec.get("at_bats", 0) or 0
+        hr = rec.get("home_runs", 0) or 0
+        sm = compute_sabermetrics(
+            at_bats=ab, hits=rec.get("hits", 0) or 0, home_runs=hr,
+            walks=rec.get("walks", 0) or 0, strikeouts=rec.get("strikeouts", 0) or 0,
+        )
+        if gp > 0 and hr > 0:
+            values["power"].append(hr / gp)
+        if ab > 0:
+            values["on_base"].append(sm["obp"])
+            values["contact"].append(sm["batting_avg"])
+            values["eye"].append(sm["bb_rate"])
+    return values
+
+
+def calibrate_benchmarks(records, percentiles=(20, 50, 80), min_samples=8):
+    """Calcule des ancrages 20/50/80 à partir des percentiles d'une population.
+
+    Rend les grades relatifs au vivier réel plutôt qu'à des seuils fixes. Pour
+    chaque métrique, on retombe sur `BENCHMARKS` si l'échantillon est trop
+    petit ou dégénéré (percentiles non strictement croissants).
+
+    ⚠️ À calibrer sur un échantillon *représentatif* : sur un fichier de
+    « leaders » (haut de distribution), les seuils seront biaisés vers le haut.
+    """
+    observed = _metric_values(records)
+    calibrated = {}
+    for metric, default in BENCHMARKS.items():
+        vals = observed[metric]
+        if len(vals) < min_samples:
+            calibrated[metric] = default
+            continue
+        p20, p50, p80 = (float(np.percentile(vals, p)) for p in percentiles)
+        # Garantit des segments strictement croissants (sinon division par 0).
+        calibrated[metric] = (p20, p50, p80) if p20 < p50 < p80 else default
+    return calibrated
