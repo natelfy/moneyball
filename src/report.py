@@ -98,11 +98,62 @@ def build_board(records, top_n=15):
     return scored, format_board(scored, top_n)
 
 
+def _html_rows(scored, top_n):
+    tools = [("contact", "HIT"), ("power", "PWR"), ("eye", "EYE"), ("on_base", "OBP")]
+    rows = []
+    for i, rec in enumerate(scored[:top_n], 1):
+        s = rec["scouting"]
+        cells = "".join(
+            f'<td class="g">{s["grades"].get(key, "·")}</td>' for key, _ in tools
+        )
+        rows.append(
+            f'<tr><td class="r">{i}</td><td class="name">{rec["player_name"]}</td>'
+            f'<td>{rec["team"]}</td><td class="fv">{s["overall_fv"]}</td>{cells}'
+            f'<td class="d">{int(s["data_completeness"] * 100)}%</td></tr>'
+        )
+    return "\n".join(rows)
+
+
+def render_html(scored, top_n=25, title="Moneyball — Tableau de scouting"):
+    """Rend un board HTML autonome (classement global + profils complets)."""
+    header = (
+        "<tr><th>#</th><th>Prospect</th><th>Équipe</th><th>FV</th>"
+        "<th>HIT</th><th>PWR</th><th>EYE</th><th>OBP</th><th>Data</th></tr>"
+    )
+    complete = [r for r in scored if r["scouting"]["data_completeness"] == 1.0]
+    return f"""<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>{title}</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; background:#0f1117; color:#e6e6e6; margin:2rem; }}
+  h1 {{ font-size:1.4rem; }} h2 {{ font-size:1.05rem; color:#9ecbff; margin-top:2rem; }}
+  table {{ border-collapse:collapse; width:100%; margin-top:.5rem; font-size:.9rem; }}
+  th, td {{ padding:.35rem .6rem; text-align:center; border-bottom:1px solid #262b36; }}
+  th {{ color:#8a93a5; text-transform:uppercase; font-size:.72rem; letter-spacing:.04em; }}
+  td.name {{ text-align:left; font-weight:600; }} td:nth-child(3) {{ text-align:left; color:#aab; }}
+  td.fv {{ font-weight:700; color:#7ee787; }} td.g {{ color:#d8dee9; }}
+  td.r {{ color:#6b7280; }} td.d {{ color:#8a93a5; }}
+  tr:hover td {{ background:#161a22; }}
+  .note {{ color:#8a93a5; font-size:.82rem; margin-top:.4rem; }}
+</style></head><body>
+<h1>⚾ {title}</h1>
+<p class="note">Grades sur l'échelle scouting 20-80. « · » = outil non mesuré (donnée absente).</p>
+<h2>Classement global ({len(scored)} prospects)</h2>
+<table>{header}
+{_html_rows(scored, top_n)}
+</table>
+<h2>Profils complets / dual-threat ({len(complete)} joueurs)</h2>
+<table>{header}
+{_html_rows(complete, top_n)}
+</table>
+</body></html>"""
+
+
 def main():
     parser = argparse.ArgumentParser(description="Tableau de scouting Moneyball")
     parser.add_argument("--source", choices=["local", "postgres"], default="local")
     parser.add_argument("--dir", default="local_data", help="Répertoire JSONL (mode local)")
     parser.add_argument("--top", type=int, default=15, help="Nombre de prospects affichés")
+    parser.add_argument("--html", metavar="PATH", help="Écrit aussi le board en HTML")
     args = parser.parse_args()
 
     records = load_local(args.dir) if args.source == "local" else load_from_postgres()
@@ -120,6 +171,11 @@ def main():
     complete = [r for r in scored if r["scouting"]["data_completeness"] == 1.0]
     print(f"\nPROFILS COMPLETS / DUAL-THREAT ({len(complete)} joueurs)")
     print(format_board(complete, args.top))
+
+    if args.html:
+        with open(args.html, "w", encoding="utf-8") as fh:
+            fh.write(render_html(scored, top_n=max(args.top, 25)))
+        logger.info(f"Board HTML écrit dans {args.html}")
 
 
 if __name__ == "__main__":

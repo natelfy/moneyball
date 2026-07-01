@@ -81,3 +81,16 @@ def test_rank_endpoint_orders_prospects():
     assert body["count"] == 2
     assert body["ranking"][0]["player_name"] == "Slugger"  # meilleure FV en tête
     assert body["ranking"][0]["overall_fv"] >= body["ranking"][1]["overall_fv"]
+
+
+def test_valuation_endpoint_flags_undervalued():
+    client = TestClient(app)
+    payload = {
+        "games_played": 57, "at_bats": 200, "hits": 78, "home_runs": 34,
+        "walks": 40, "strikeouts": 30, "scout_hit_grade": 40, "scout_power_grade": 40,
+    }
+    resp = client.post("/valuation", json=payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["label"] == "UNDERVALUED"
+    assert body["gap"] > 0

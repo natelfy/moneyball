@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from features import MODEL_FEATURE_COLUMNS, compute_sabermetrics
 from scoring import rank_prospects, to_scout_scale
+from valuation import compare_to_scout
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("inference-api")
@@ -50,6 +51,18 @@ class ProspectCounts(BaseModel):
 
 class RankRequest(BaseModel):
     prospects: list[ProspectCounts]
+
+
+class ValuationRequest(BaseModel):
+    """Comptages du joueur + grades du scout, pour détecter une sous-évaluation."""
+    games_played: int = Field(default=0, ge=0)
+    at_bats: int = Field(default=0, ge=0)
+    hits: int = Field(default=0, ge=0)
+    home_runs: int = Field(default=0, ge=0)
+    walks: int = Field(default=0, ge=0)
+    strikeouts: int = Field(default=0, ge=0)
+    scout_hit_grade: int = Field(ge=20, le=80)
+    scout_power_grade: int = Field(ge=20, le=80)
 
 
 def _download_model_from_s3(local_path: str) -> None:
@@ -131,3 +144,17 @@ def rank(request: RankRequest) -> dict:
             for r in ranked
         ],
     }
+
+
+@app.post("/valuation")
+def valuation(request: ValuationRequest) -> dict:
+    """Détecte une inefficience de marché : grade statistique vs grade du scout.
+
+    `gap` positif = la production dépasse la réputation (potentielle pépite).
+    """
+    stats = request.model_dump()
+    scout = {
+        "hit_grade": stats.pop("scout_hit_grade"),
+        "power_grade": stats.pop("scout_power_grade"),
+    }
+    return compare_to_scout(stats, scout)

@@ -1,4 +1,4 @@
-from report import build_board, merge_records
+from report import build_board, merge_records, render_html
 
 
 def test_merge_records_takes_max_per_field():
@@ -37,3 +37,15 @@ def test_build_board_ranks_complete_profile_and_renders():
     assert "PROSPECT" in board
     # Le tableau contient bien les deux joueurs.
     assert "Slugger" in board and "Complete" in board
+
+
+def test_render_html_produces_valid_document():
+    records = [
+        {"player_name": "Slugger", "team": "A", "games_played": 57, "home_runs": 34},
+        {"player_name": "Complete", "team": "B", "games_played": 55,
+         "at_bats": 200, "hits": 78, "home_runs": 20, "walks": 40, "strikeouts": 25},
+    ]
+    scored, _ = build_board(records, top_n=10)
+    html = render_html(scored, top_n=10)
+    assert html.startswith("<!doctype html>")
+    assert "<table>" in html and "Slugger" in html and "Complete" in html

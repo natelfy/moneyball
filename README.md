@@ -34,9 +34,10 @@ Le projet suit une architecture *medallion* (Bronze / Silver) :
 | `nlp_parser.py`  | Parse les PDF de scouts (regex + Pydantic) → table `scout_grades`.         |
 | `features.py`    | Feature engineering sabermétrique partagé (OBP, K%, BB/K…) — parité train/inférence. |
 | `scoring.py`     | Moteur de scoring : convertit les stats en grades 20-80 par outil + note globale. |
-| `report.py`      | Tableau de scouting : fusionne les sources, score et classe les prospects. |
+| `valuation.py`   | Détection de sous-évaluation : grade statistique vs grade du scout (cœur moneyball). |
+| `report.py`      | Tableau de scouting : fusionne les sources, score, classe (texte ou HTML). |
 | `train.py`       | Silver → ML : JOIN quantitatif/qualitatif, entraîne XGBoost, pousse le modèle. |
-| `api.py`         | API FastAPI : inférence du modèle (`/predict`) et classement statistique (`/rank`). |
+| `api.py`         | API FastAPI : `/predict`, classement `/rank`, sous-évaluation `/valuation`. |
 | `mock_pdf.py`    | Utilitaire : génère un rapport de scout PDF de démo et l'envoie en Bronze.  |
 
 ### Features sabermétriques
@@ -75,6 +76,24 @@ PROFILS COMPLETS / DUAL-THREAT (5 joueurs)
 
 C'est la fusion des sources (UPSERT `GREATEST`) qui reconstitue ces profils
 complets à partir de fichiers partiels.
+
+Export **HTML** du board (artefact autonome, ouvrable dans un navigateur) :
+
+```bash
+PYTHONPATH=src python src/report.py --source local --dir local_data --html board.html
+```
+
+### Détection de sous-évaluation (`valuation.py`)
+
+Le cœur de l'approche *moneyball* : trouver les joueurs dont la **production**
+dépasse la **réputation**. On compare, outil par outil, le grade statistique
+(issu des chiffres) au grade du scout :
+
+- `gap > 0` → **sous-évalué** : les stats disent plus que le scout (pépite) ;
+- `gap < 0` → **surévalué** : le scout note au-dessus de la production.
+
+Comparaison offensive (bat vs bat) assumée : le grade statistique ne couvre pas
+la défense/course, incluses dans la Future Value globale du scout.
 
 ## Démarrage rapide
 
@@ -122,9 +141,16 @@ curl -X POST http://localhost:8000/rank \
         {"player_name":"Davis","team":"Louisville","games_played":57,"home_runs":34},
         {"player_name":"Rodriguez","team":"BCU","games_played":54,"at_bats":154,"hits":64,"walks":40}
       ]}'
+
+# Sous-évaluation : stats du joueur vs grades du scout
+curl -X POST http://localhost:8000/valuation \
+  -H "Content-Type: application/json" \
+  -d '{"games_played":57,"at_bats":200,"hits":78,"home_runs":34,"walks":40,
+       "strikeouts":30,"scout_hit_grade":40,"scout_power_grade":40}'
+# → {"gap": 39.0, "label": "UNDERVALUED", "components": {"hit": 38, "power": 40}, ...}
 ```
 
-- API : http://localhost:8000 (`/health`, `/predict`, `/rank`, docs auto sur `/docs`)
+- API : http://localhost:8000 (`/health`, `/predict`, `/rank`, `/valuation`, docs sur `/docs`)
 - Console MinIO : http://localhost:9001
 - PostgreSQL : `localhost:5432`, base `scouting_db`
 
