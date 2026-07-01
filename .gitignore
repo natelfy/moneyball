@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tests / couverture
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Artefacts MLOps
+*.joblib
+*.pkl
+data/
+/tmp/
+
+# Secrets / config locale
+.env
+*.env
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

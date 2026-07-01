@@ -26,7 +26,9 @@ def load_s3_to_postgres(bucket_name: str, file_key: str):
         region_name='us-east-1'
     )
     
-    local_tmp_path = f"/tmp/{file_key}"
+    # basename : évite qu'une clé S3 contenant un '/' (ex: "2024/hitters.jsonl")
+    # ne pointe vers un sous-dossier /tmp inexistant, ou hors de /tmp.
+    local_tmp_path = os.path.join("/tmp", os.path.basename(file_key))
     try:
         s3.download_file(bucket_name, file_key, local_tmp_path)
         logger.info(f"Fichier {file_key} téléchargé depuis S3.")
@@ -34,51 +36,56 @@ def load_s3_to_postgres(bucket_name: str, file_key: str):
         logger.error(f"Échec du téléchargement S3 : {e}")
         return
 
-    # 2. Lecture des données
-    records = []
-    with open(local_tmp_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            data = json.loads(line)
-            # On extrait les valeurs dans l'ordre de notre table SQL
-            records.append((
-                data.get("player_name"), data.get("team"),
-                data.get("games_played", 0), data.get("at_bats", 0),
-                data.get("hits", 0), data.get("home_runs", 0),
-                data.get("walks", 0), data.get("strikeouts", 0)
-            ))
-
-    if not records:
-        logger.warning("Aucune donnée à insérer.")
-        return
-
-    # 3. UPSERT dans PostgreSQL (Mise à jour si conflit sur la clé primaire)
-    upsert_query = """
-        INSERT INTO ncaa_hitting_stats 
-        (player_name, team, games_played, at_bats, hits, home_runs, walks, strikeouts)
-        VALUES %s
-        ON CONFLICT (player_name, team) DO UPDATE SET
-            games_played = GREATEST(ncaa_hitting_stats.games_played, EXCLUDED.games_played),
-            at_bats = GREATEST(ncaa_hitting_stats.at_bats, EXCLUDED.at_bats),
-            hits = GREATEST(ncaa_hitting_stats.hits, EXCLUDED.hits),
-            home_runs = GREATEST(ncaa_hitting_stats.home_runs, EXCLUDED.home_runs),
-            walks = GREATEST(ncaa_hitting_stats.walks, EXCLUDED.walks),
-            strikeouts = GREATEST(ncaa_hitting_stats.strikeouts, EXCLUDED.strikeouts),
-            last_updated = CURRENT_TIMESTAMP;
-    """
-
-    conn = get_db_connection()
+    # Le fichier temporaire est toujours supprimé (données vides, erreur de
+    # lecture ou d'insertion) pour ne pas saturer /tmp entre deux runs.
     try:
-        with conn.cursor() as cur:
-            # execute_values est optimisé pour les insertions en masse (Bulk Insert)
-            execute_values(cur, upsert_query, records)
-        conn.commit()
-        logger.info(f"SUCCESS : {len(records)} prospects fusionnés dans le Data Warehouse.")
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Échec de l'insertion SQL : {e}")
+        # 2. Lecture des données
+        records = []
+        with open(local_tmp_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                data = json.loads(line)
+                # On extrait les valeurs dans l'ordre de notre table SQL
+                records.append((
+                    data.get("player_name"), data.get("team"),
+                    data.get("games_played", 0), data.get("at_bats", 0),
+                    data.get("hits", 0), data.get("home_runs", 0),
+                    data.get("walks", 0), data.get("strikeouts", 0)
+                ))
+
+        if not records:
+            logger.warning("Aucune donnée à insérer.")
+            return
+
+        # 3. UPSERT dans PostgreSQL (Mise à jour si conflit sur la clé primaire)
+        upsert_query = """
+            INSERT INTO ncaa_hitting_stats
+            (player_name, team, games_played, at_bats, hits, home_runs, walks, strikeouts)
+            VALUES %s
+            ON CONFLICT (player_name, team) DO UPDATE SET
+                games_played = GREATEST(ncaa_hitting_stats.games_played, EXCLUDED.games_played),
+                at_bats = GREATEST(ncaa_hitting_stats.at_bats, EXCLUDED.at_bats),
+                hits = GREATEST(ncaa_hitting_stats.hits, EXCLUDED.hits),
+                home_runs = GREATEST(ncaa_hitting_stats.home_runs, EXCLUDED.home_runs),
+                walks = GREATEST(ncaa_hitting_stats.walks, EXCLUDED.walks),
+                strikeouts = GREATEST(ncaa_hitting_stats.strikeouts, EXCLUDED.strikeouts),
+                last_updated = CURRENT_TIMESTAMP;
+        """
+
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                # execute_values est optimisé pour les insertions en masse (Bulk Insert)
+                execute_values(cur, upsert_query, records)
+            conn.commit()
+            logger.info(f"SUCCESS : {len(records)} prospects fusionnés dans le Data Warehouse.")
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Échec de l'insertion SQL : {e}")
+        finally:
+            conn.close()
     finally:
-        conn.close()
-        os.remove(local_tmp_path)
+        if os.path.exists(local_tmp_path):
+            os.remove(local_tmp_path)
 
 if __name__ == "__main__":
     BUCKET = os.getenv("S3_BUCKET", "bronze-amateur-stats")

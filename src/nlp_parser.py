@@ -44,13 +44,21 @@ def extract_text_from_pdf(local_path: str) -> str:
 def parse_scout_text(text: str) -> ScoutReport:
     """Parse le texte non-structuré via Regex et valide via Pydantic."""
     try:
-        # Regex dynamiques pour isoler les métriques dans le chaos d'un rapport texte
-        player_match = re.search(r"(?i)Player:\s*([A-Za-z\s\-\']+)", text)
-        scout_match = re.search(r"(?i)Scout:\s*([A-Za-z\s\-\']+)", text)
-        
-        # Extraction de l'échelle 20-80 (ex: "Hit: 55" ou "Hit Grade - 60")
+        # Regex ancrées à la ligne (MULTILINE) : on capture jusqu'à la fin de
+        # ligne sans déborder sur le champ suivant. `.+?` exclut '\n' par défaut,
+        # ce qui évite d'avaler "Player: X\nScout: Y" en un seul nom.
+        player_match = re.search(r"(?im)^\s*Player:\s*(.+?)\s*$", text)
+        scout_match = re.search(r"(?im)^\s*Scout:\s*(.+?)\s*$", text)
+
+        # Extraction de l'échelle 20-80 (ex: "Hit: 55" ou "Hit Grade - 60").
+        # `re.escape` protège les libellés à espaces/caractères spéciaux
+        # (ex: "Overall FV") et l'ancrage ^ évite les faux positifs sur une
+        # autre ligne du rapport.
         def get_grade(tool: str) -> int:
-            match = re.search(rf"(?i){tool}.*?(20|25|30|35|40|45|50|55|60|65|70|75|80)", text)
+            match = re.search(
+                rf"(?im)^\s*{re.escape(tool)}\b.*?(20|25|30|35|40|45|50|55|60|65|70|75|80)\b",
+                text,
+            )
             return int(match.group(1)) if match else 40 # 40 = Moyenne basse par défaut (MLB average is 50)
 
         # Création et validation stricte de l'objet
@@ -89,29 +97,36 @@ def process_report(bucket_name: str, file_key: str):
         report = parse_scout_text(raw_text)
         logger.info(f"NLP Réussi pour le joueur : {report.player_name} (FV: {report.overall_fv})")
 
-        # Load (PostgreSQL)
+        # Load (PostgreSQL) — la connexion est fermée dans tous les cas
+        # (succès, erreur SQL) avec rollback pour ne pas laisser de
+        # transaction ouverte ni fuiter la connexion.
         conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO scout_grades 
-                (player_name, scout_name, hit_grade, power_grade, run_grade, arm_grade, field_grade, overall_fv)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (player_name, scout_name) DO UPDATE SET
-                    hit_grade = EXCLUDED.hit_grade,
-                    power_grade = EXCLUDED.power_grade,
-                    run_grade = EXCLUDED.run_grade,
-                    arm_grade = EXCLUDED.arm_grade,
-                    field_grade = EXCLUDED.field_grade,
-                    overall_fv = EXCLUDED.overall_fv,
-                    report_date = CURRENT_TIMESTAMP;
-            """, (
-                report.player_name, report.scout_name, report.hit_grade, 
-                report.power_grade, report.run_grade, report.arm_grade, 
-                report.field_grade, report.overall_fv
-            ))
-        conn.commit()
-        conn.close()
-        logger.info(f"Notes qualitatives fusionnées dans la couche Silver.")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO scout_grades
+                    (player_name, scout_name, hit_grade, power_grade, run_grade, arm_grade, field_grade, overall_fv)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (player_name, scout_name) DO UPDATE SET
+                        hit_grade = EXCLUDED.hit_grade,
+                        power_grade = EXCLUDED.power_grade,
+                        run_grade = EXCLUDED.run_grade,
+                        arm_grade = EXCLUDED.arm_grade,
+                        field_grade = EXCLUDED.field_grade,
+                        overall_fv = EXCLUDED.overall_fv,
+                        report_date = CURRENT_TIMESTAMP;
+                """, (
+                    report.player_name, report.scout_name, report.hit_grade,
+                    report.power_grade, report.run_grade, report.arm_grade,
+                    report.field_grade, report.overall_fv
+                ))
+            conn.commit()
+            logger.info(f"Notes qualitatives fusionnées dans la couche Silver.")
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     except Exception as e:
         logger.error(f"Échec du traitement global : {e}")
