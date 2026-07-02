@@ -1,4 +1,11 @@
-from report import build_board, merge_records, render_html
+from report import (
+    build_board,
+    build_gems,
+    format_gems_board,
+    merge_records,
+    render_html,
+    scouts_by_key,
+)
 
 
 def test_merge_records_takes_max_per_field():
@@ -49,3 +56,39 @@ def test_render_html_produces_valid_document():
     html = render_html(scored, top_n=10)
     assert html.startswith("<!doctype html>")
     assert "<table>" in html and "Slugger" in html and "Complete" in html
+    # Sans rapports de scouts, pas de section inefficiences.
+    assert "Inefficiences" not in html
+
+
+_STATS = [
+    {"player_name": "Gem", "team": "X", "games_played": 57,
+     "at_bats": 200, "hits": 78, "home_runs": 34, "walks": 40, "strikeouts": 30},
+    {"player_name": "NoScout", "team": "Z", "games_played": 57, "home_runs": 20},
+]
+_SCOUTS = [
+    {"player_name": "Gem", "scout_name": "S", "hit_grade": 40, "power_grade": 40},
+]
+
+
+def test_scouts_by_key_matches_by_name_and_reuses_stats_team():
+    mapping = scouts_by_key(_STATS, _SCOUTS)
+    # Le rapport de scout ne porte pas l'équipe : la clé vient des stats.
+    assert list(mapping) == [("Gem", "X")]
+    assert mapping[("Gem", "X")]["hit_grade"] == 40
+
+
+def test_build_gems_crosses_and_attaches_scout():
+    scored, _ = build_board(_STATS, top_n=10)
+    gems = build_gems(scored, _SCOUTS)
+    assert len(gems) == 1  # NoScout exclu (pas de rapport)
+    assert gems[0]["valuation"]["label"] == "UNDERVALUED"
+    assert gems[0]["scout"]["scout_name"] == "S"
+
+
+def test_format_gems_board_and_html_render_gems():
+    scored, _ = build_board(_STATS, top_n=10)
+    gems = build_gems(scored, _SCOUTS)
+    text = format_gems_board(gems)
+    assert "UNDERVALUED" in text and "Gem" in text
+    html = render_html(scored, top_n=10, gems=gems)
+    assert "Inefficiences" in html and "UNDERVALUED" in html

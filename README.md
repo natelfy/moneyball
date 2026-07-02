@@ -84,6 +84,22 @@ Export **HTML** du board (artefact autonome, ouvrable dans un navigateur) :
 PYTHONPATH=src python src/report.py --source local --dir local_data --html board.html
 ```
 
+Avec `--scouts fichier.jsonl` (ou automatiquement depuis la table
+`scout_grades` en mode postgres), le board ajoute la section
+**inefficiences de marché** — le croisement production vs réputation :
+
+```
+INEFFICIENCES DE MARCHÉ — production vs réputation (7 joueurs croisés)
+ #  PROSPECT           ÉQUIPE          ÉCART  STAT/SCOUT (HIT)  STAT/SCOUT (PWR)
+ 1  Chris Katz         Mercer          +26.5             78/45             60/40  UNDERVALUED
+ 2  Landon Hairston    Arizona St.     +17.5             80/60             70/55  UNDERVALUED
+ ...
+ 7  Vahn Lackey        Georgia Tech     -7.5             80/80             55/70  OVERVALUED
+```
+
+`local_data/scout_grades_demo.jsonl` fournit des grades de scouts **fictifs**
+(fixture de démo) pour tester le croisement sans infrastructure.
+
 ### Détection de sous-évaluation (`valuation.py`)
 
 Le cœur de l'approche *moneyball* : trouver les joueurs dont la **production**
@@ -126,6 +142,21 @@ sur un échantillon de « leaders » biaise les seuils vers le haut — utiliser
 vivier complet.
 
 ## Démarrage rapide
+
+Un `Makefile` orchestre toutes les étapes — `make help` liste les cibles :
+
+```bash
+make board       # tableau de scouting sur les données locales (sans infra)
+make board-html  # board HTML -> board.html
+make test lint   # qualité
+make infra       # MinIO + PostgreSQL
+make ingest TARGET_URL=... FILE_NAME=...   # scrape -> Bronze
+make load FILE_NAME=...                    # Bronze -> Silver
+make train                                 # entraîne + pousse le modèle
+make api                                   # API d'inférence :8000
+```
+
+Ou étape par étape :
 
 ```bash
 # 0. Configurer les secrets (copie du modèle, à ajuster)
