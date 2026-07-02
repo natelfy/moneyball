@@ -141,6 +141,13 @@ pour ancrer les grades au vivier réel plutôt qu'à des seuils fixes. ⚠️ Ca
 sur un échantillon de « leaders » biaise les seuils vers le haut — utiliser un
 vivier complet.
 
+## Alimenter l'outil avec de vraies données
+
+Le mode opératoire complet (sources vérifiées, commandes exactes, contrôles
+qualité, garde-fous légaux) est dans **[docs/DATA_PLAYBOOK.md](docs/DATA_PLAYBOOK.md)** :
+stats NCAA (`stats.ncaa.org`), Cape Cod League (Pointstreak), grades de scouts
+(FanGraphs The Board), labels de draft (API MLB officielle).
+
 ## Démarrage rapide
 
 Un `Makefile` orchestre toutes les étapes — `make help` liste les cibles :
