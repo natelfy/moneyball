@@ -29,6 +29,7 @@ Le projet suit une architecture *medallion* (Bronze / Silver) :
 |------------------|-----------------------------------------------------------------------------|
 | `models.py`      | Schéma Pydantic `HitterStat` (validation des stats).                        |
 | `scraper.py`     | Scrape les tableaux de stats NCAA (retry + mapping dynamique des colonnes). |
+| `convert_ncaa.py`| Convertit les exports manuels stats.ncaa.org (xlsx/csv/copier) en JSONL.    |
 | `main.py`        | Orchestration : scrape → cache local JSONL → upload Bronze (S3).           |
 | `loader.py`      | Bronze → Silver : charge le JSONL S3 dans PostgreSQL (UPSERT).             |
 | `nlp_parser.py`  | Parse les PDF de scouts (regex + Pydantic) → table `scout_grades`.         |

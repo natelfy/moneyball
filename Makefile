@@ -26,6 +26,9 @@ board-html: ## Board HTML autonome -> board.html
 evaluate: ## Évalue le modèle (DATA=fichier.jsonl labellisé, sinon warehouse)
 	$(PY) src/evaluate.py $(if $(DATA),--data $(DATA))
 
+convert: ## Convertit des exports stats.ncaa.org en JSONL (FILES="a.xlsx b.csv" OUTDIR=data_ncaa)
+	$(PY) src/convert_ncaa.py $(FILES) --outdir $(or $(OUTDIR),data_ncaa)
+
 infra: ## Démarre MinIO + PostgreSQL
 	docker compose up -d minio postgres
 
@@ -48,4 +51,4 @@ clean: ## Supprime caches et artefacts locaux
 	rm -rf .pytest_cache .ruff_cache board.html
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
-.PHONY: help test lint board board-html evaluate infra ingest load nlp train api clean
+.PHONY: help test lint board board-html evaluate convert infra ingest load nlp train api clean

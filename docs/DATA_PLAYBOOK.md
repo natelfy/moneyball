@@ -37,21 +37,69 @@ docker compose ps          # les 2 services doivent être "running"
 
 ## Étape B — Stats NCAA : les features (1-2 h la première fois)
 
-### B.1 Où cliquer
+> Deux voies. **La voie manuelle (B.1→B.3, export Excel/copier) est la
+> recommandée** : plus fiable que le scraping, zéro souci de robots. La voie
+> scraper (B.4) sert à automatiser plus tard.
 
-1. Va sur `https://stats.ncaa.org/rankings?sport_code=MBA&division=1`.
-2. Sélectionne la saison dans le menu déroulant (une par cohorte : 2021…2025).
-3. Sélectionne la catégorie individuelle. **Ingère au minimum ces 3 catégories**
-   par saison — la fusion `GREATEST` du warehouse reconstituera les profils :
-   - *Batting Average* (donne G, AB, H),
-   - *Home Runs* (donne G, HR),
-   - *Walks* ou *On-Base Percentage* (donne BB).
-   Ajoute *Strikeouts* si la catégorie existe pour la saison.
-4. **Important — anti-biais** : choisis la vue listant **tous les joueurs
-   qualifiés** (pas le top 50). C'est indispensable pour la calibration
-   (étape G). S'il y a pagination, récupère toutes les pages.
+### B.1 Quoi exporter, pour chaque saison (2021 → saison courante)
 
-### B.2 Test de compatibilité du scraper (2 min, à faire UNE fois)
+Sur `https://stats.ncaa.org/rankings?sport_code=MBA&division=1` :
+sélectionne la **saison**, puis la catégorie individuelle, puis exporte le
+tableau (bouton *Excel*, ou *Copy* → coller dans un fichier `.txt`).
+
+| # | Catégorie NCAA | Colonnes qu'elle apporte | Nom de fichier conseillé |
+|---|---|---|---|
+| 1 | **Batting Average** | G, AB, H | `ncaa_d1_2024_ba.xlsx` |
+| 2 | **Home Runs** | G, HR | `ncaa_d1_2024_hr.xlsx` |
+| 3 | **Base on Balls** (walks) | G, BB | `ncaa_d1_2024_bb.xlsx` |
+| 4 | *(si la catégorie existe)* Strikeouts frappeurs | K/SO | `ncaa_d1_2024_so.xlsx` |
+
+C'est tout : **3 fichiers par saison** (4 si les strikeouts existent), soit
+~15 exports pour 5 saisons. La fusion `GREATEST` du pipeline recompose les
+profils complets à partir de ces vues partielles. Si la catégorie strikeouts
+n'existe pas pour les frappeurs : pas grave — les grades (`contact`, `eye`,
+`on_base`, `power`) n'en dépendent pas ; seules deux features du modèle ML
+(`k_rate`, `bb_per_k`) resteront à 0.
+
+Règles d'export :
+- **Affiche le maximum de lignes avant d'exporter** (l'export ne contient que
+  ce qui est affiché) ; s'il y a plusieurs pages, exporte chaque page — la
+  fusion déduplique.
+- **Tous les qualifiés**, pas le top 50 : indispensable pour la calibration
+  (étape G).
+- Garde les fichiers bruts dans `exports/<saison>/` : c'est ta couche Bronze
+  locale (preuve + re-traitement sans re-télécharger).
+
+### B.2 Convertir les exports en JSONL (une commande)
+
+Le convertisseur `src/convert_ncaa.py` accepte `.xlsx`, `.csv` et le
+copier-coller (tabulations). Il retrouve la ligne d'en-têtes même précédée de
+titres, remet les noms « Last, First » en « First Last » (crucial pour les
+jointures FanGraphs/draft), retire les bilans « (45-12) » collés aux équipes
+(en préservant « Miami (OH) »), et valide chaque ligne via Pydantic :
+
+```bash
+make convert FILES="exports/2024/ncaa_d1_2024_ba.xlsx exports/2024/ncaa_d1_2024_hr.xlsx exports/2024/ncaa_d1_2024_bb.xlsx" OUTDIR=data_ncaa/2024
+# → data_ncaa/2024/*.jsonl  (le log affiche le nombre de joueurs par fichier)
+```
+
+Vérification immédiate, sans infra — tu dois voir des noms réels et des
+grades plausibles :
+
+```bash
+PYTHONPATH=src python3 src/report.py --source local --dir data_ncaa/2024 --top 15
+```
+
+### B.3 Charger dans le warehouse (2 options)
+
+- **Option console (zéro code)** : ouvre `http://localhost:9001` (console
+  MinIO), bucket `bronze-amateur-stats`, glisse-dépose les `.jsonl`, puis
+  `make load FILE_NAME=ncaa_d1_2024_ba.jsonl` pour chaque fichier.
+- **Option 100 % locale** : garde tout dans `data_ncaa/` — le board, la
+  calibration et `evaluate --data` fonctionnent sans warehouse. PostgreSQL
+  n'est indispensable que pour `make train` (le JOIN SQL stats × scouts).
+
+### B.4 Voie scraper (automatisation, optionnelle)
 
 Le scraper attend `<table><thead><th>…` avec des en-têtes contenant
 `PLAYER`/`NAME`, `TEAM`, `G`, `AB`, `H`, `HR`, `BB`, `K`/`SO`. Vérifie sur la
@@ -66,29 +114,14 @@ print(len(players), "joueurs ;", players[0] if players else "RIEN — voir ci-de
 PY
 ```
 
-- **≥ 50 joueurs avec noms/équipes corrects** → c'est bon, passe en B.3.
-- **0 joueur** → ouvre la page dans un navigateur, note les en-têtes exacts de
-  colonnes, et ajoute-les comme alias dans `src/scraper.py` (fonctions
-  `get_str`/`get_val`, ex. `get_val(cols, "K", "SO", "STRIKEOUTS")`). Un seul
-  endroit à modifier, les tests `tests/test_scraper.py` te protègent.
-- **Erreur HTTP/403** → le site exige un navigateur : sauvegarde la page en
-  HTML (Ctrl+S) et parse le fichier local avec `extract_stats(open(f).read())`.
+- **≥ 50 joueurs avec noms/équipes corrects** → utilise
+  `make ingest TARGET_URL=… FILE_NAME=…` puis `make load FILE_NAME=…`.
+  Cadence : 3-5 s entre pages.
+- **0 joueur** → ajoute les en-têtes réels comme alias dans `src/scraper.py`
+  (`get_str`/`get_val`).
+- **Erreur HTTP/403** → reste sur la voie manuelle B.1→B.3 : c'est son rôle.
 
-### B.3 Ingestion (par saison × catégorie)
-
-```bash
-make ingest TARGET_URL="…page BA saison 2024…"  FILE_NAME=ncaa_d1_2024_ba.jsonl
-make load   FILE_NAME=ncaa_d1_2024_ba.jsonl
-make ingest TARGET_URL="…page HR saison 2024…"  FILE_NAME=ncaa_d1_2024_hr.jsonl
-make load   FILE_NAME=ncaa_d1_2024_hr.jsonl
-# … idem walks/OBP, puis répéter par saison
-```
-
-Cadence : **3 à 5 secondes entre chaque page** (ajoute `time.sleep` si tu
-scriptes une boucle). Le HTML brut est archivé en Bronze (MinIO) : c'est voulu,
-ne saute pas l'étape — c'est ta preuve et ton cache de re-traitement.
-
-### B.4 Contrôles qualité (à chaque saison chargée)
+### B.5 Contrôles qualité (à chaque saison chargée)
 
 ```sql
 -- dans psql (make infra ; docker compose exec postgres psql -U mlops scouting_db)
@@ -108,8 +141,10 @@ chargé que la catégorie HR) ; des noms vides (mapping de colonnes cassé).
 Les stats officielles CCBL sont chez Pointstreak (`leagueid=166`) :
 `https://pointstreak.com/baseball/stats.html?leagueid=166&seasonid=…` et le
 menu des saisons `https://baseball.pointstreak.com/textstats/menu_seasons.html?leagueid=166`.
-Même procédure que B.2→B.4 (test du scraper, alias si besoin, ingest, load).
-Intérêt : la CCBL utilise des battes en bois — signal plus proche du niveau pro.
+Même procédure que l'étape B : exporte/copie les tableaux de frappeurs, puis
+`make convert` (le convertisseur gère les mêmes formats) — ou la voie scraper
+B.4. Intérêt : la CCBL utilise des battes en bois — signal plus proche du
+niveau pro.
 
 ---
 
